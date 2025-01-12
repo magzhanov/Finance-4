@@ -11,6 +11,9 @@ install.packages("knitr")
 install.packages("kableExtra")
 install.packages("tidyr")
 install.packages("tinytex")
+install.packages("fixest")
+install.packages("stargazer")
+install.packages("modelsummary")
 
 ##### LIBRARIES #####
 library("dplyr") 
@@ -18,6 +21,9 @@ library("datasets")
 library(knitr)          # For generating tables
 library(kableExtra)     # For beautiful tables
 library(tinytex)        # For PDF compilation from LaTeX
+library(fixest)         # For high dim fixed effects
+library(stargazer)
+library(modelsummary)
 
 ##### DESCRIPTIVE STATISTICS #####
 # Load example dataset
@@ -145,7 +151,42 @@ writeLines(latex_document, "descriptive_statistics.tex")
 tinytex::pdflatex("descriptive_statistics.tex")
 
 ##### HIGH DIMENSIONAL FIXED EFFECTS #####
+# Load the trade data
+data(trade)
 
+# Set up models
+model_pois <- fepois(Euros ~ log(dist_km) | Origin + Destination + Product + Year, data = trade)
+model_ols <- feols(log(Euros) ~ log(dist_km) | Origin + Destination + Product + Year, data = trade)
+model_negbin <- fenegbin(Euros ~ log(dist_km) | Origin + Destination + Product + Year, data = trade)
+
+# Generate the etable LaTeX table
+etable_latex <- etable(
+  list(
+    "Poisson" = model_pois,
+    "OLS" = model_ols,
+    "Negative Binomial" = model_negbin
+  ),
+  cluster = ~Origin + Destination,
+  tex = TRUE,        # Output LaTeX code
+  title = "High-Dimensional Fixed Effects Results"
+)
+
+latex_doc <- c(
+  "\\documentclass{article}",
+  "\\usepackage{booktabs}",
+  "\\usepackage{geometry}",
+  "\\geometry{a4paper, margin=1in}",
+  "\\begin{document}",
+  "\\section*{High-Dimensional Fixed Effects Results}",
+  etable_latex,  # Insert the etable LaTeX table directly
+  "\\end{document}"
+)
+
+# Write the LaTeX document to a file
+writeLines(latex_doc, "high_dim_fixed_effects.tex")
+
+# Compile the LaTeX document into a PDF
+tinytex::pdflatex("high_dim_fixed_effects.tex")
 
 ##### NONLINEAR MODELS #####
 
