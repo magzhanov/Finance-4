@@ -301,6 +301,7 @@ ggplot(trade, aes(x = log1p(Euros))) +
        y = "Density") +
   theme_minimal()
 
+# 5. Beautiful The Economist style plot
 # Add the Economist font "Roboto Slab"
 font_add_google(name = "Roboto Slab", family = "Roboto Slab")
 showtext_auto()
@@ -360,6 +361,45 @@ plot <- ggplot(trade_filtered, aes(x = log_Euros, fill = Destination)) +
 # Save the plot as a standalone image
 ggsave(plot = plot, filename = "density_plot_beauty.png", width = 8, height = 5)
 
+# 6. Scatter plot for trade flows and distance
+# Scatter Plot: Log(Distance) vs Log(Trade Flows)
+scatter_plot <- ggplot(trade_filtered, aes(x = log(dist_km), y = log_Euros)) +
+  geom_point(aes(color = Destination), size = 3, alpha = 0.7) +  # Scatter points
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed", size = 1.5) +  # Black dashed trend line
+  scale_color_manual(values = economist_colors) +  # Use the same colors for consistency
+  labs(
+    title = "Relationship Between Distance and Trade Flows",
+    subtitle = "Trade flows vs distance for selected European countries",
+    x = "Log(Distance)",
+    y = "Log(Trade Flows)",
+    caption = "Source: Trade Data | Chart by @yourname"
+  ) +
+  theme(
+    # General plot appearance
+    text = element_text(family = "Roboto Slab"),
+    plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "cm"),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(color = "#dcdbd8"),
+    panel.grid.minor.y = element_blank(),
+    # Axis text and title sizes (slightly reduced)
+    axis.text = element_text(size = 36, color = "gray8"),
+    axis.title = element_text(size = 44, color = "gray8"),
+    axis.line.x = element_line(color = "gray8"),
+    axis.line.y = element_line(color = "gray8"),
+    # Title and subtitle sizes (slightly reduced)
+    plot.title = element_text(size = rel(3.5), hjust = 0, face = "bold"),
+    plot.subtitle = element_text(size = rel(2.8), hjust = 0),
+    plot.caption = element_text(hjust = 0, size = 22, color = "#4B4B4B"),
+    # Legend customization
+    legend.title = element_blank(),
+    legend.position = "none"  # Remove legend for simplicity
+  )
+
+# Save the scatter plot
+ggsave(plot = scatter_plot, filename = "scatter_plot.png", width = 10, height = 6)
 
 ##### NONLINEAR MODELS #####
 
