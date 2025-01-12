@@ -17,6 +17,8 @@ install.packages("ggplot2")
 install.packages("ggthemes")
 install.packages("showtext")
 install.packages("curl")
+install.packages("margins")
+install.packages("AER")
 
 ##### LIBRARIES #####
 library("dplyr") 
@@ -30,6 +32,8 @@ library(ggplot2)
 library(ggthemes)       # awesome themes for ggplot2
 library(showtext)       # text styles on plots
 library(curl)           # for text styles auxiliary
+library(margins)        # marginal effects computation
+library(AER)            # for Tobit
 
 ##### DESCRIPTIVE STATISTICS #####
 # Load example dataset
@@ -359,7 +363,7 @@ plot <- ggplot(trade_filtered, aes(x = log_Euros, fill = Destination)) +
     legend.text = element_text(size = 24, margin = margin(l = 3))
   )
 # Save the plot as a standalone image
-ggsave(plot = plot, filename = "density_plot_beauty.png", width = 8, height = 5)
+ggsave(plot = plot, filename = "density_plot.png", width = 8, height = 5)
 
 # 6. Scatter plot for trade flows and distance
 # Scatter Plot: Log(Distance) vs Log(Trade Flows)
@@ -401,5 +405,256 @@ scatter_plot <- ggplot(trade_filtered, aes(x = log(dist_km), y = log_Euros)) +
 # Save the scatter plot
 ggsave(plot = scatter_plot, filename = "scatter_plot.png", width = 10, height = 6)
 
-##### NONLINEAR MODELS #####
+##### NONLINEAR MODELS [1]: LOGIT & PROBIT #####
+# Generate dataset with 1000 observations
+set.seed(123)
+data <- tibble(
+  X1 = rnorm(1000, mean = 0, sd = 1),
+  X2 = rnorm(1000, mean = 5, sd = 2),
+  X3 = rnorm(1000, mean = -3, sd = 1.5)
+)
 
+# Create a binary outcome (Y) based on a latent variable
+latent = 0.5 * data$X1 - 0.3 * data$X2 + 0.2 * data$X3 + rnorm(1000)
+data <- data %>% mutate(Y = ifelse(latent > 0, 1, 0))
+
+# Fit Logit model
+logit_model <- glm(Y ~ X1 + X2 + X3, data = data, family = binomial(link = "logit"))
+
+# Fit Probit model
+probit_model <- glm(Y ~ X1 + X2 + X3, data = data, family = binomial(link = "probit"))
+
+# Fit OLS model
+ols_model <- lm(Y ~ X1 + X2 + X3, data = data)
+
+# Let's see equations' estimates in console
+stargazer(
+  logit_model, probit_model, ols_model,
+  type = "text",
+  title = "Regression Results",
+  dep.var.labels = c("Probability of Y"),
+  covariate.labels = c("X1", "X2", "X3"),
+  #column.labels = c("Logit", "Probit", "OLS"),
+  digits = 3,
+  align = TRUE,
+  single.row = TRUE
+)
+
+# Recovering true DGP parameters:
+# Scale Logit coefficients by pi/sqrt(3) (~1.814) due to the logistic variance.
+# Probit coefficients directly match the DGP scale.
+
+# Compute marginal effects for Logit and Probit models
+logit_mfx <- summary(margins(logit_model))
+probit_mfx <- summary(margins(probit_model))
+
+# Adjust column names dynamically based on the `margins` output
+logit_mfx_tidy <- logit_mfx %>%
+  select(contains("Factor"), contains("AME")) %>%
+  rename(term = contains("Factor"), logit_mfx = contains("AME"))
+
+probit_mfx_tidy <- probit_mfx %>%
+  select(contains("Factor"), contains("AME")) %>%
+  rename(term = contains("Factor"), probit_mfx = contains("AME"))
+
+# Extract coefficients for OLS and combine with marginal effects
+ols_coeffs <- tidy(ols_model) %>%
+  select(term, estimate) %>%
+  rename(ols_coeff = estimate)
+
+# Combine all results into a single table
+results_table <- full_join(logit_mfx_tidy, probit_mfx_tidy, by = "term") %>%
+  full_join(ols_coeffs, by = "term") %>%
+  mutate(term = recode(term, "(Intercept)" = "Intercept"))
+
+# Create a LaTeX document to display marginal effects
+latex_doc <- c(
+  "\\documentclass{article}",
+  "\\usepackage{booktabs}",
+  "\\usepackage{geometry}",
+  "\\geometry{a4paper, margin=1in}",
+  "\\begin{document}",
+  "\\section*{Logit, Probit, and OLS Model Results}",
+  "\\subsection*{Marginal Effects}",
+  "\\begin{tabular}{lccc}",
+  "\\toprule",
+  "Term & Logit Marginal Effect & Probit Marginal Effect & OLS Coefficient \\\\",
+  "\\midrule",
+  paste(
+    results_table$term,
+    "&",
+    formatC(results_table$logit_mfx, digits = 3, format = "f"),
+    "&",
+    formatC(results_table$probit_mfx, digits = 3, format = "f"),
+    "&",
+    formatC(results_table$ols_coeff, digits = 3, format = "f"),
+    "\\\\",
+    collapse = "\n"
+  ),
+  "\\bottomrule",
+  "\\end{tabular}",
+  "\\end{document}"
+)
+
+# Write the LaTeX document to a file
+writeLines(latex_doc, "marginal_effects_results.tex")
+# Compile the LaTeX document into a PDF
+tinytex::pdflatex("marginal_effects_results.tex")
+
+# Marginal effects differ from DGP parameters because:
+# 1. Marginal effects measure the change in probability of the outcome when a regressor changes by 1 unit,
+#    whereas DGP parameters describe the linear contribution to the latent variable.
+# 2. For nonlinear models (e.g., Logit and Probit), marginal effects depend on the distribution's slope at the predicted probability,
+#    which varies across observations, making marginal effects context-specific and not directly comparable to DGP parameters.
+
+
+
+##### NONLINEAR MODELS [2]: TOBIT #####
+# Generate data
+set.seed(123)
+n <- 1000
+
+# Generate a single continuous regressor and a censored outcome
+X1 <- rnorm(n, mean = 0, sd = 1)
+latent_Y <- 1 + 2 * X1 + rnorm(n, sd = 1)  # True relationship with intercept
+Y <- pmax(latent_Y, 0)  # Censor Y at 0 (Tobit model)
+
+# Combine data into a data frame
+data_tobit_simple <- data.frame(
+  X1 = X1,
+  latent_Y = latent_Y,
+  Y = Y
+)
+
+# Estimate Tobit model
+tobit_model_simple <- tobit(Y ~ X1, left = 0, data = data_tobit_simple)
+
+# Add fitted values to the dataset
+data_tobit_simple$predicted_Y <- predict(tobit_model_simple, newdata = data_tobit_simple)  # Predicted latent Y
+data_tobit_simple$predicted_observed_Y <- pmax(data_tobit_simple$predicted_Y, 0)  # Apply censoring to predicted Y
+
+# Visualization
+ggplot(data_tobit_simple, aes(x = X1)) +
+  # Plot observed points
+  geom_point(aes(y = Y), color = "blue", alpha = 0.5, size = 1.5) +
+  # Plot the predicted fit (latent Y)
+  geom_line(aes(y = predicted_Y), color = "red", linewidth = 1) +
+  # Plot the predicted observed Y (accounting for censoring)
+  geom_line(aes(y = predicted_observed_Y), color = "green", linewidth = 1, linetype = "dotted") +
+  # Add true underlying relationship for reference
+  geom_abline(intercept = 1, slope = 2, linetype = "dashed", color = "black") +
+  labs(
+    title = "Tobit Model: Observed, Predicted, and True Latent Values",
+    subtitle = "Predicted observed Y (green), predicted latent (red), and true latent (black)",
+    x = "X1",
+    y = "Y"
+  ) +
+  theme_minimal(base_size = 14)
+
+summary(tobit_model_simple)
+
+##### NONLINEAR MODELS [3]: POISSON #####
+# Generate data
+set.seed(123)
+n <- 1000
+
+# Generate a single continuous regressor and count outcome
+X1 <- rnorm(n, mean = 2, sd = 1)  # Regressor
+lambda <- exp(0.5 + 0.3 * X1)  # True Poisson mean
+Y <- rpois(n, lambda)  # Poisson-distributed outcome
+
+# Combine data into a data frame
+data_poisson <- data.frame(
+  X1 = X1,
+  Y = Y,
+  lambda = lambda  # Store the true lambda for reference
+)
+
+# Visualize the distribution of Y
+ggplot(data_poisson, aes(x = Y)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Dependent Variable (Y)",
+    subtitle = "Illustrating the discrete and skewed nature of the Poisson-distributed outcome",
+    x = "Y (Count Outcome)",
+    y = "Frequency"
+  ) +
+  theme_minimal(base_size = 14)
+
+# Fit Poisson regression
+poisson_model <- glm(Y ~ X1, family = poisson(link = "log"), data = data_poisson)
+
+# Fit OLS regression
+ols_model <- lm(Y ~ X1, data = data_poisson)
+
+# Add fitted values to the dataset
+data_poisson$poisson_fit <- predict(poisson_model, type = "response")  # Poisson fitted values
+data_poisson$ols_fit <- predict(ols_model)  # OLS fitted values
+
+# Scatter plot with fitted values
+ggplot(data_poisson, aes(x = X1, y = Y)) +
+  # Observed points
+  geom_point(color = "blue", alpha = 0.5, size = 1.5) +
+  # Poisson fitted values
+  geom_line(aes(y = poisson_fit, color = "Poisson Fit"), linewidth = 1) +
+  # OLS fitted values
+  geom_line(aes(y = ols_fit, color = "OLS Fit"), linewidth = 1, linetype = "dashed") +
+  # Customize legend
+  scale_color_manual(
+    values = c("Poisson Fit" = "red", "OLS Fit" = "black"),
+    name = NULL  # Remove the word "Legend"
+  ) +
+  labs(
+    title = "Scatter Plot with Fitted Values",
+    subtitle = "Comparison of Poisson and OLS fits for count data",
+    x = "X1",
+    y = "Y (Count Outcome)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",              # Move legend to the top
+    legend.justification = "left",        # Align legend to the left
+    legend.box.just = "left",             # Adjust box justification
+    legend.text = element_text(size = 12) # Increase legend text size
+  )
+
+# Generate comparison table
+stargazer(
+  poisson_model, ols_model,
+  type = "text",
+  title = "Comparison of Poisson and OLS Regression Results",
+  dep.var.labels = "Count Outcome (Y)",
+  covariate.labels = c("X1", "Intercept"),
+  column.labels = c("Poisson", "OLS"),
+  align = TRUE
+)
+
+# Calculate Residuals and Metrics
+data_poisson <- data_poisson %>%
+  mutate(
+    poisson_resid = Y - poisson_fit,
+    ols_resid = Y - ols_fit
+  )
+
+# Mean Squared Error (MSE)
+mse_poisson <- mean(data_poisson$poisson_resid^2)
+mse_ols <- mean(data_poisson$ols_resid^2)
+
+# Mean Absolute Error (MAE)
+mae_poisson <- mean(abs(data_poisson$poisson_resid))
+mae_ols <- mean(abs(data_poisson$ols_resid))
+
+# Create a comparison table
+comparison_table <- data.frame(
+  Model = c("Poisson", "OLS"),
+  MSE = c(mse_poisson, mse_ols),
+  MAE = c(mae_poisson, mae_ols)
+)
+
+# Display Comparison Table
+kable(
+  comparison_table,
+  caption = "Comparison of Poisson and OLS Models",
+  digits = 3,
+  align = "c"
+)
